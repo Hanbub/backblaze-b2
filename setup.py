@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='backblaze',
-    version='0.2',
+    name='backblazeb2',
+    version='0.3.0',
     packages=find_packages(),
     license=open("LICENSE").read(),
     long_description=open('README.md').read(),
