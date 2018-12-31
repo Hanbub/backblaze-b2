@@ -1,6 +1,6 @@
 backblaze-b2
 ============
-Python module for accessing the Backblaze B2 API
+Python module for accessing the Backblaze B2 API for use with Python 3.
 
 
 Examples
