@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-from __future__ import absolute_import
+
 
 import mmap
 import sys
 import time
 
-import Queue
+import queue
 import base64
 import hashlib
 import json
@@ -13,7 +13,8 @@ import os
 import re
 import tempfile
 import threading
-import urllib2
+import io
+import urllib.request, urllib.error, urllib.parse
 from Crypto import Random
 from Crypto.Cipher import AES
 
@@ -88,7 +89,7 @@ def calc_encryption_sha_and_length(in_file, password, salt, key_length, key,
     return sha.hexdigest(), size
 
 
-class Read2Encrypt(file):
+class Read2Encrypt(io.BufferedReader):
     """ Return encrypted data from read() calls
         Override read() for urllib2 when streaming encrypted data (uploads)
     """
@@ -118,7 +119,7 @@ class Read2Encrypt(file):
         if self.finished:
             return None
 
-        chunk = file.read(self, size)
+        chunk = io.BufferedReader.read(self, size)
         if len(chunk) == 0 or len(chunk) % self.bs != 0:
             padding_length = (self.bs - len(chunk) % self.bs) or self.bs
             chunk += padding_length * chr(padding_length)
@@ -142,24 +143,24 @@ class BackBlazeB2(object):
         self.upload_authorization_token = None
         self.valid_duration = valid_duration
         self.queue_size = mt_queue_size
-        self.upload_queue = Queue.Queue(maxsize=mt_queue_size)
+        self.upload_queue = queue.Queue(maxsize=mt_queue_size)
         self.default_timeout = default_timeout
         self._last_authorization_token_time = None
         self.auth_token_lifetime_in_seconds = auth_token_lifetime_in_seconds
 
     def authorize_account(self, timeout=None):
         id_and_key = self.account_id + ':' + self.app_key
-        basic_auth_string = 'Basic ' + base64.b64encode(id_and_key)
+        basic_auth_string = 'Basic ' + base64.b64encode(id_and_key.encode()).decode()
         headers = {'Authorization': basic_auth_string}
         try:
-            request = urllib2.Request(
+            request = urllib.request.Request(
                 'https://api.backblaze.com/b2api/v1/b2_authorize_account',
                 headers=headers
             )
             response = self.__url_open_with_timeout(request, timeout)
-            response_data = json.loads(response.read())
+            response_data = json.loads(response.read().decode())
             response.close()
-        except urllib2.HTTPError, error:
+        except urllib.error.HTTPError as error:
             print("ERROR: %s" % error.read())
             raise
 
@@ -178,9 +179,9 @@ class BackBlazeB2(object):
     def __url_open_with_timeout(self, request, timeout):
         if timeout is not None or self.default_timeout is not None:
             custom_timeout = timeout or self.default_timeout
-            response = urllib2.urlopen(request, timeout=custom_timeout)
+            response = urllib.request.urlopen(request, timeout=custom_timeout)
         else:
-            response = urllib2.urlopen(request)
+            response = urllib.request.urlopen(request)
         return response
 
     def create_bucket(self, bucket_name, bucket_type='allPrivate', timeout=None):
@@ -313,7 +314,7 @@ class BackBlazeB2(object):
         if " " in filename:
             filename = filename.replace(" ", "%20")
         # TODO: Figure out URL encoding issue
-        filename = unicode(filename, "utf-8")
+        filename = str(filename, "utf-8")
         headers = {
             'Authorization': cur_upload_authorization_token,
             'X-Bz-File-Name': filename,
@@ -323,12 +324,12 @@ class BackBlazeB2(object):
         }
         try:
             if password:
-                request = urllib2.Request(cur_upload_url, fp, headers)
+                request = urllib.request.Request(cur_upload_url, fp, headers)
             else:
-                request = urllib2.Request(cur_upload_url, mm_file_data, headers)
+                request = urllib.request.Request(cur_upload_url, mm_file_data, headers)
             response = self.__url_open_with_timeout(request, timeout)
             response_data = json.loads(response.read())
-        except urllib2.HTTPError, error:
+        except urllib.error.HTTPError as error:
             print("ERROR: %s" % error.read())
             raise
 
@@ -428,14 +429,14 @@ class BackBlazeB2(object):
             raise Exception(
                 "Destination file exists. Refusing to overwrite. "
                 "Set force=True if you wish to do so.")
-        request = urllib2.Request(
+        request = urllib.request.Request(
             url, None, {})
         response = self.__url_open_with_timeout(request, timeout)
 
         return BackBlazeB2.write_file(response, dst_file_name, password)
 
     def download_file_by_name(self, file_name, dst_file_name, bucket_id=None,
-                              bucket_name=None, force=False, password=None, timeout=None):
+                              bucket_name=None, force=False, password=None, timeout=None, range=None):
         if os.path.exists(dst_file_name) and not force:
             raise Exception(
                 "Destination file exists. Refusing to overwrite. "
@@ -451,15 +452,17 @@ class BackBlazeB2(object):
         headers = {
             'Authorization': self.authorization_token
         }
-
-        request = urllib2.Request(
+        if range is not None:
+            headers.update({'Range': 'bytes={}-{}'.format(range[0], range[1])})
+            
+        request = urllib.request.Request(
             url, None, headers)
         response = self.__url_open_with_timeout(request, timeout)
 
         return BackBlazeB2.write_file(response, dst_file_name, password)
 
     def download_file_by_id(self, file_id, dst_file_name, force=False,
-                            password=None, timeout=None):
+                            password=None, timeout=None, range=None):
         if os.path.exists(dst_file_name) and not force:
             raise Exception(
                 "Destination file exists. Refusing to overwrite. "
@@ -467,8 +470,14 @@ class BackBlazeB2(object):
 
         self._authorize_account(timeout)
         url = self.download_url + '/b2api/v1/b2_download_file_by_id?fileId=' + file_id
-        request = urllib2.Request(url, None,
-                                  {'Authorization': self.authorization_token})
+
+        headers = {
+            'Authorization': self.authorization_token
+        }
+        if range is not None:
+            headers.update({'Range': 'bytes={}-{}'.format(range[0], range[1])})
+
+        request = urllib.request.Request(url, None, headers)
         resp = self.__url_open_with_timeout(request, timeout)
         return BackBlazeB2.write_file(resp, dst_file_name, password)
 
@@ -498,7 +507,7 @@ class BackBlazeB2(object):
                                      thread_upload_url=thread_upload_url,
                                      thread_upload_authorization_token=thread_upload_authorization_token)
                     break
-                except Exception, e:
+                except Exception as e:
                     print(
                             "WARNING: Error processing file '%s'\n%s\nTrying again." % (
                         path, e))
@@ -565,9 +574,9 @@ class BackBlazeB2(object):
 
     def _api_request(self, url, data, headers, timeout=None):
         self._authorize_account(timeout)
-        request = urllib2.Request(url, json.dumps(data), headers)
+        request = urllib.request.Request(url, json.dumps(data).encode(), headers)
         response = self.__url_open_with_timeout(request, timeout)
-        response_data = json.loads(response.read())
+        response_data = json.loads(response.read().decode())
         response.close()
         return response_data
 
@@ -596,7 +605,7 @@ class BackBlazeB2(object):
 
 # Example command line utility
 if __name__ == "__main__":
-    import argparse, ConfigParser
+    import argparse, configparser
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', required=True, dest='config_path',
@@ -631,7 +640,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Consume config
-    config = ConfigParser.ConfigParser()
+    config = configparser.ConfigParser()
     config.read(args.config_path)
     account_id = config.get('auth', 'account_id')
     app_key = config.get('auth', 'app_key')
