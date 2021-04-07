@@ -13,3 +13,4 @@ dist/*
 
 # Pycharm metadata
 .idea/*
+.venv
