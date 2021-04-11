@@ -314,7 +314,6 @@ class BackBlazeB2(object):
         if " " in filename:
             filename = filename.replace(" ", "%20")
         # TODO: Figure out URL encoding issue
-        filename = str(filename, "utf-8")
         headers = {
             'Authorization': cur_upload_authorization_token,
             'X-Bz-File-Name': filename,
