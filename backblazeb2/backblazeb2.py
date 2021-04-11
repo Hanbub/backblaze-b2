@@ -321,6 +321,14 @@ class BackBlazeB2(object):
             # 'Content-Type' : 'b2/x-auto',
             'X-Bz-Content-Sha1': sha
         }
+
+        if not password:
+            # https://www.backblaze.com/b2/docs/b2_upload_file.html
+            # Content-Length - required
+            #
+            # The number of bytes in the file being uploaded. Note that this header is required; you cannot leave it out and just use chunked encoding.
+            # When sending the SHA1 checksum at the end, the Content-Length should be set to the size of the file plus the 40 bytes of hex checksum.
+            headers['Content-Length'] = mm_file_data.size()
         try:
             if password:
                 request = urllib.request.Request(cur_upload_url, fp, headers)
