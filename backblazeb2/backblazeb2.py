@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-
-
+import errno
 import mmap
 import sys
 import time
@@ -133,7 +132,7 @@ class Read2Encrypt(io.BufferedReader):
 
 class BackBlazeB2(object):
     def __init__(self, account_id, app_key, mt_queue_size=12, valid_duration=24 * 60 * 60,
-                 auth_token_lifetime_in_seconds=2 * 60 * 60, default_timeout=None):
+                 auth_token_lifetime_in_seconds=2 * 60 * 60, default_timeout=None, simulate_errors=False):
         self.account_id = account_id
         self.app_key = app_key
         self.authorization_token = None
@@ -147,6 +146,7 @@ class BackBlazeB2(object):
         self.default_timeout = default_timeout
         self._last_authorization_token_time = None
         self.auth_token_lifetime_in_seconds = auth_token_lifetime_in_seconds
+        self.simulate_errors = simulate_errors
 
     def authorize_account(self, timeout=None):
         id_and_key = self.account_id + ':' + self.app_key
@@ -322,6 +322,9 @@ class BackBlazeB2(object):
             'X-Bz-Content-Sha1': sha
         }
 
+        if self.simulate_errors:
+            headers['X-Bz-Test-Mode'] = 'fail_some_uploads'
+
         if not password:
             # https://www.backblaze.com/b2/docs/b2_upload_file.html
             # Content-Length - required
@@ -337,7 +340,16 @@ class BackBlazeB2(object):
             response = self.__url_open_with_timeout(request, timeout)
             response_data = json.loads(response.read())
         except urllib.error.HTTPError as error:
+            if error.code == 408 or 500 <= error.code < 600:
+                print("todo: restart upload")  # todo: complete this
+                raise
             print("ERROR: %s" % error.read())
+            raise
+        except urllib.error.URLError as error:
+            if error and error.reason and error.reason.errno in (errno.EPIPE, errno.ETIMEDOUT):
+                print("todo: restart upload")  # todo: complete this
+                raise
+            print("ERROR: %s" % error.errno)
             raise
 
         response.close()
@@ -461,7 +473,7 @@ class BackBlazeB2(object):
         }
         if range is not None:
             headers.update({'Range': 'bytes={}-{}'.format(range[0], range[1])})
-            
+
         request = urllib.request.Request(
             url, None, headers)
         response = self.__url_open_with_timeout(request, timeout)
