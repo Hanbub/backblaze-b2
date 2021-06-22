@@ -1,19 +1,21 @@
 # -*- coding: utf-8 -*-
-import errno
-import mmap
-import sys
-import time
-
-import queue
 import base64
+import errno
 import hashlib
+import io
 import json
+import mmap
 import os
+import queue
 import re
+import sys
 import tempfile
 import threading
-import io
-import urllib.request, urllib.error, urllib.parse
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
 from Crypto import Random
 from Crypto.Cipher import AES
 
@@ -131,6 +133,9 @@ class Read2Encrypt(io.BufferedReader):
 
 
 class BackBlazeB2(object):
+    __default_retry_num_for_upload = 3
+    __fallback_default_retry = 20
+
     def __init__(self, account_id, app_key, mt_queue_size=12, valid_duration=24 * 60 * 60,
                  auth_token_lifetime_in_seconds=2 * 60 * 60, default_timeout=None, simulate_errors=False):
         self.account_id = account_id
@@ -147,6 +152,7 @@ class BackBlazeB2(object):
         self._last_authorization_token_time = None
         self.auth_token_lifetime_in_seconds = auth_token_lifetime_in_seconds
         self.simulate_errors = simulate_errors
+        self.max_retry_num_for_upload = self.__default_retry_num_for_upload  # todo: pass as param?
 
     def authorize_account(self, timeout=None):
         id_and_key = self.account_id + ':' + self.app_key
@@ -267,8 +273,22 @@ class BackBlazeB2(object):
 
     # If password is set, encrypt files, else nah
     def upload_file(self, path, password=None, bucket_id=None, bucket_name=None,
-                    thread_upload_url=None,
-                    thread_upload_authorization_token=None, timeout=None):
+                    thread_upload_url=None, thread_upload_authorization_token=None, timeout=None):
+        return self._inner_upload_file(path, password, bucket_id, bucket_name, thread_upload_url,
+                                       thread_upload_authorization_token, timeout)
+
+    def _inner_upload_file(self, path, password=None, bucket_id=None, bucket_name=None,
+                           thread_upload_url=None, thread_upload_authorization_token=None, timeout=None,
+                           retry_num=0, sleep_in_sec_before_upload=0.0):
+
+        if retry_num >= self.max_retry_num_for_upload:
+            raise Exception('too many retries, failing.')
+
+        if retry_num > 0:
+            print(f'Retry {retry_num + 1}/{self.max_retry_num_for_upload}')
+
+        if sleep_in_sec_before_upload and sleep_in_sec_before_upload > 0:
+            time.sleep(sleep_in_sec_before_upload)
 
         self._authorize_account(timeout)
 
@@ -341,15 +361,23 @@ class BackBlazeB2(object):
             response_data = json.loads(response.read())
         except urllib.error.HTTPError as error:
             if error.code == 408 or 500 <= error.code < 600:
-                print("todo: restart upload")  # todo: complete this
-                raise
+                print("ERROR: %s. Retry!" % error.read())
+                retry_after = float(error.headers.get('Retry-After', self.__fallback_default_retry))
+                if fp and not fp.closed:
+                    fp.close()
+                return self._inner_upload_file(path, password, bucket_id, bucket_name, thread_upload_url,
+                                               thread_upload_authorization_token, timeout, retry_num + 1, retry_after)
             print("ERROR: %s" % error.read())
             raise
         except urllib.error.URLError as error:
             if error and error.reason and error.reason.errno in (errno.EPIPE, errno.ETIMEDOUT):
-                print("todo: restart upload")  # todo: complete this
-                raise
-            print("ERROR: %s" % error.errno)
+                print("ERROR: %s. Retry!" % error.reason)
+                retry_after = float(self.__fallback_default_retry)
+                if fp and not fp.closed:
+                    fp.close()
+                return self._inner_upload_file(path, password, bucket_id, bucket_name, thread_upload_url,
+                                               thread_upload_authorization_token, timeout, retry_num + 1, retry_after)
+            print("ERROR: %s" % error.reason)
             raise
 
         response.close()
