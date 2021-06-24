@@ -364,7 +364,7 @@ class BackBlazeB2(object):
                 print("ERROR: %s. Retry!" % error.read())
                 retry_after = float(error.headers.get('Retry-After', self.__fallback_default_retry))
                 if retry_after == float(self.__fallback_default_retry):
-                    retry_after = retry_after * (retry_num+1)
+                    retry_after = retry_after * (retry_num + 1)
                 if fp and not fp.closed:
                     fp.close()
                 return self._inner_upload_file(path, password, bucket_id, bucket_name, thread_upload_url,
