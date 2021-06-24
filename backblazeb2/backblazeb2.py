@@ -363,6 +363,8 @@ class BackBlazeB2(object):
             if error.code == 408 or 500 <= error.code < 600:
                 print("ERROR: %s. Retry!" % error.read())
                 retry_after = float(error.headers.get('Retry-After', self.__fallback_default_retry))
+                if retry_after == float(self.__fallback_default_retry):
+                    retry_after = retry_after * (retry_num+1)
                 if fp and not fp.closed:
                     fp.close()
                 return self._inner_upload_file(path, password, bucket_id, bucket_name, thread_upload_url,
@@ -372,7 +374,7 @@ class BackBlazeB2(object):
         except urllib.error.URLError as error:
             if error and error.reason and error.reason.errno in (errno.EPIPE, errno.ETIMEDOUT):
                 print("ERROR: %s. Retry!" % error.reason)
-                retry_after = float(self.__fallback_default_retry)
+                retry_after = float(self.__fallback_default_retry) * (retry_num + 1)
                 if fp and not fp.closed:
                     fp.close()
                 return self._inner_upload_file(path, password, bucket_id, bucket_name, thread_upload_url,
