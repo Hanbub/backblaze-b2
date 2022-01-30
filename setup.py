@@ -6,5 +6,5 @@ setup(
     packages=find_packages(),
     license=open("LICENSE").read(),
     long_description=open('README.md').read(),
-    install_requires=["pycrypto==2.6.1"]
+    install_requires=["pycryptodome==3.13.0"]
 )
